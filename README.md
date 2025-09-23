@@ -196,3 +196,40 @@ claude_desktop_config.jsonに下記のように記載しました。
 
 ツールを使って、という必要はなく、取引データをください、と指示するだけで、ツールを使うように判断してくれルようです。<br>
 ![](image/claude2.png "")
+
+### 3. SnowflakeのMCPを利用して自然言語クエリを試行
+Snowflake-Labsが提供しているMCPを利用してみました。<br>
+URL：https://github.com/Snowflake-Labs
+
+Cortex Analyticsなどは設定していないため、下記の簡易なconfigで試行。
+```
+agent_services: # List all Cortex Agent services
+
+search_services: # List all Cortex Search services
+
+analyst_services: # List all Cortex Analyst semantic models/views
+
+other_services: # Set desired tool groups to True to enable tools for that group
+  object_manager: True # Perform basic operations against Snowflake's most common objects such as creation, dropping, updating, and more.
+  query_manager: True # Run LLM-generated SQL managed by user-configured permissions.
+  semantic_manager: True # Discover and query Snowflake Semantic Views and their components.
+sql_statement_permissions: # List SQL statements to explicitly allow (True) or disallow (False).
+  # - All: True # To allow everything, uncomment and set All: True.
+  - Alter: True
+  - Command: True
+  - Comment: True
+  - Commit: True
+  - Create: True
+  - Delete: True
+  - Describe: True
+  - Drop: True
+  - Insert: True
+  - Merge: True
+  - Rollback: True
+  - Select: True
+  - Transaction: True
+  - TruncateTable: True
+  - Unknown: False # To allow unknown or unmapped statement types, set Unknown: True.
+  - Update: True
+  - Use: True
+```
