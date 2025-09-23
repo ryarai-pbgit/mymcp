@@ -199,7 +199,7 @@ claude_desktop_config.jsonに下記のように記載しました。
 
 ### 3. SnowflakeのMCPを利用して自然言語クエリを試行
 Snowflake-Labsが提供しているMCPを利用してみました。<br>
-URL：https://github.com/Snowflake-Labs
+URL：https://github.com/Snowflake-Labs<br>
 
 Cortex Analyticsなどは設定していないため、下記の簡易なconfigで試行。
 ```
@@ -233,3 +233,24 @@ sql_statement_permissions: # List SQL statements to explicitly allow (True) or d
   - Update: True
   - Use: True
 ```
+Claude Desktopの設定は下記のように実施。
+```
+{
+  "mcpServers": {
+    "mcp-server-snowflake": {
+      "command": "/Users/********/.local/bin/uvx",
+      "args": [
+        "snowflake-labs-mcp",
+        "--service-config-file",
+        "/Users/********/Desktop/mywork/mymcp/tools_config.yaml",
+        "--connection-name",
+        "myconnection"
+      ]
+    }
+  }
+}
+```
+自然言語でクエリしてみた様子はこちら。
+![](image/claude_sf1.png "")
+![](image/claude_sf2.png "")
+![](image/claude_sf3.png "")
