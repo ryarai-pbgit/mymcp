@@ -254,3 +254,169 @@ Claude Desktopの設定は下記のように実施。
 ![](image/claude_sf1.png "")
 ![](image/claude_sf2.png "")
 ![](image/claude_sf3.png "")
+
+### 4. MCPクライアントを使わないでMCPを使う試行
+MCPクライアントツールに依存したくないため、できるだけネイティブな形でMCPを利用できることを確かめてみました。<br>
+curlで/v1/responsesエンドポイントを呼び出して、外部LLMにMCPサーバを提示し、Snowflakeに自然言語クエリを実行してもらいました。<br>
+この形が作れたことで、クライアントは任意のPythonプログラムとすることができ、それがAIエージェントへと昇華するのだろうと推察。<br>
+
+#### 4.1 環境構成
+下記の通り。SnowflakeとLLMはクラウド、残りはローカルで組みました。<br>
+SIする時は、それぞれの要素がサーバなりコンテナなりPaaSなりkubeちゃんなりになると思います。<br>
+![](image/env.png "")
+
+#### 4.2 環境構築
+Snowflake MCPサーバはローカルで起動、LiteLLMはDocker Composeで立ち上げました。<br>
+おかげで、LLM Proxyから見たMCPサーバのドメインは、host.docker.internal、となってしまいました。<br>
+```
+[LiteLLM（prometheusは要らないので消しました。）]
+services:
+  litellm:
+    build:
+      context: .
+      args:
+        target: runtime
+    image: ghcr.io/berriai/litellm:main-stable
+    #########################################
+    ## Uncomment these lines to start proxy with a config.yaml file ##
+    # volumes:
+    #  - ./config.yaml:/app/config.yaml <<- this is missing in the docker-compose file currently
+    # command:
+    #  - "--config=/app/config.yaml"
+    ##############################################
+    ports:
+      - "4000:4000" # Map the container port to the host, change the host port if necessary
+    environment:
+      DATABASE_URL: "postgresql://llmproxy:dbpassword9090@db:5432/litellm"
+      STORE_MODEL_IN_DB: "True" # allows adding models to proxy via UI
+    env_file:
+      - .env # Load local .env file
+    depends_on:
+      - db  # Indicates that this service depends on the 'db' service, ensuring 'db' starts first
+    healthcheck:  # Defines the health check configuration for the container
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 http://localhost:4000/health/liveliness || exit 1" ]  # Command to execute for health check
+      interval: 30s  # Perform health check every 30 seconds
+      timeout: 10s   # Health check command times out after 10 seconds
+      retries: 3     # Retry up to 3 times if health check fails
+      start_period: 40s  # Wait 40 seconds after container start before beginning health checks
+
+  db:
+    image: postgres:16
+    restart: always
+    container_name: litellm_db
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: llmproxy
+      POSTGRES_PASSWORD: dbpassword9090
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Persists Postgres data across container restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d litellm -U llmproxy"]
+      interval: 1s
+      timeout: 5s
+      retries: 10
+
+#  prometheus:
+#    image: prom/prometheus
+#    volumes:
+#      - prometheus_data:/prometheus
+#      - ./prometheus:/etc/prometheus
+#    ports:
+#      - "9090:9090"
+#    command:
+#      - "--config.file=/etc/prometheus/prometheus.yml"
+#      - "--storage.tsdb.path=/prometheus"
+#      - "--storage.tsdb.retention.time=15d"
+#    restart: always
+
+volumes:
+  prometheus_data:
+    driver: local
+  postgres_data:
+    name: litellm_postgres_data # Named volume for Postgres data persistence
+```
+ログ上はこんな感じで立ち上がります。
+![](image/litellm.png "")
+起動確認のためTOPのOpenAPI定義画面を確認<br>
+![](image/litellm_api.png "")
+管理画面も確認。今回モデルの登録やMCPの登録は、YAMLを書かずに管理画面でやってみました。<br>
+![](image/litellm_login.png "")
+
+MCPサーバは、下記のコマンドで起動。<br>
+```
+uvx snowflake-labs-mcp --service-config-file tools_config.yaml --connection-name myconnection --transport sse
+```
+![](image/mcpserver.png "")
+
+LLMは、Azure OpenAIからgpt-4o-miniを調達。<br>
+![](image/gpt4omini.png "")
+
+管理画面では、モデルとMCPを登録。<br>
+![](image/litellm_add_model.png "")
+![](image/litellm_add_mcp_server.png "")
+MCPサーバはちゃんと登録できていれば、LiteLLMの管理画面でツール一覧が見れて、テスト実行できるようになります。<br>
+![](image/litellm_add_mcp_server.png "")
+
+
+#### 4.3 /v1/responsesの呼び出し
+下記のようなcurlを実行します。
+```
+curl --location 'http://127.0.0.1:4000/v1/responses' \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer sk-1234" \
+--data '{
+  "model": "gpt-4o-mini",
+  "tools": [
+    {
+      "type": "mcp",
+      "server_label": "snowflake",
+      "server_url": "litellm_proxy",
+      "require_approval": "never",
+      "headers": {
+            "x-litellm-api-key": "Bearer sk-1234"
+        }
+    }
+  ],
+  "input": "次の内容をマークダウン形式で出力してください: TESTDBのPUBLICスキーマにはどのようなテーブルがありますか？",
+  "tool_choice": "required"
+}'
+```
+レスポンスのマークダウンはこんな感じです。
+```
+### TESTDBのPUBLICスキーマのテーブル
+
+1. **CUSTOMER_DATA**
+   - **説明**: 顧客に関する人口統計データを含むテーブル。各レコードは単一の顧客を表し、彼らの個人的特徴やライフスタイル、趣味についての詳細が含まれています。
+   - **作成日**: 2025-08-28
+   - **行数**: 10,000
+   - **バイト数**: 555,008
+   - **所有者**: ACCOUNTADMIN
+
+2. **MY_AZURE_DATA**
+   - **説明**: （説明なし）
+   - **作成日**: 2025-08-30
+   - **行数**: 不明
+   - **バイト数**: 0
+   - **所有者**: ACCOUNTADMIN
+   - **外部テーブル**: はい
+
+3. **OVERDUE_TABLE**
+   - **説明**: 遅延アイテムのレコードを含むテーブル。各レコードは、期限を過ぎた単一のアイテムを表し、借りたユーザーとアイテム自体についての詳細が含まれています。
+   - **作成日**: 2025-08-28
+   - **行数**: 1,000
+   - **バイト数**: 34,816
+   - **所有者**: ACCOUNTADMIN
+
+4. **TRANSACTION_DATA**
+   - **説明**: 財務取引のレコードを含むテーブル。特に販売や購入に関するもので、ユーザー、日付、カテゴリ、財務情報についての詳細が含まれています。各レコードは単一の取引を表し、ユーザー、購入または販売されたアイテム、および取引の場所についての詳細が含まれています。
+   - **作成日**: 2025-08-28
+   - **行数**: 1,502,286
+   - **バイト数**: 26,454,016
+   - **所有者**: ACCOUNTADMIN
+
+これらのテーブルは、データ分析やビジネスインサイトの取得に使用されることができます。
+```
+ビジュアルはこんな感じです。
+![](image/md.png "")

@@ -1,2 +1,4 @@
 /mysnowflake/*
 /mcp-snowflake-server/*
+/.venv/*
+./docker-compose.yml
