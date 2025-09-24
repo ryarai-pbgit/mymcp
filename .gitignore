@@ -2,3 +2,4 @@
 /mcp-snowflake-server/*
 /.venv/*
 ./docker-compose.yml
+.DS_Store
